@@ -1,6 +1,6 @@
 {
   "name": "@maks11060/upnp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "UPnP protocol simple lib",
   "type": "module",
   "exports": "./dist/upnp.js",
