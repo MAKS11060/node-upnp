@@ -1,0 +1,33 @@
+{
+  "name": "@maks11060/upnp",
+  "version": "1.0.0",
+  "description": "UPnP protocol simple lib",
+  "type": "module",
+  "exports": "./dist/upnp.js",
+  "types": "./types/upnp.d.ts",
+  "scripts": {
+    "start": "node dist/index.js",
+    "build": "tsc src/upnp.ts --outDir dist -t esnext -m esnext --moduleResolution node --allowSyntheticDefaultImports --declaration --declarationDir types",
+    "start:w": "nodemon dist/index.js",
+    "build:w": "tsc src/upnp.ts -w --outDir dist -t esnext -m esnext --moduleResolution node --allowSyntheticDefaultImports --sourceMap",
+    "prepare": "npm run build"
+  },
+  "keywords": [],
+  "author": "maks11060",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^3.1.0",
+    "typescript": "^4.4.4",
+    "xml2js": "^0.4.23"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.7",
+    "@types/xml2js": "^0.4.9"
+  },
+  "nodemonConfig": {
+    "verbose": false,
+    "watch": [
+      "dist"
+    ]
+  }
+}
