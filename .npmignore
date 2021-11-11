@@ -1,0 +1,6 @@
+# IDEA files
+.idea
+
+# Source files
+src/
+tsconfig.json

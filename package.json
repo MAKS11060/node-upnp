@@ -15,12 +15,13 @@
   "keywords": [],
   "author": "maks11060",
   "license": "MIT",
+  "repository": "git://github.com/MAKS11060/node-upnp.git",
   "dependencies": {
     "node-fetch": "^3.1.0",
-    "typescript": "^4.4.4",
     "xml2js": "^0.4.23"
   },
   "devDependencies": {
+    "typescript": "^4.4.4",
     "@types/node": "^16.11.7",
     "@types/xml2js": "^0.4.9"
   },
