@@ -1,6 +1,6 @@
 {
   "name": "@maks11060/upnp",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "UPnP protocol simple lib",
   "type": "module",
   "exports": "./dist/upnp.js",
@@ -12,7 +12,9 @@
     "build:w": "tsc src/upnp.ts -w --outDir dist -t esnext -m esnext --moduleResolution node --allowSyntheticDefaultImports --sourceMap",
     "prepare": "npm run build"
   },
-  "keywords": [],
+  "keywords": [
+    "UPnP", "UPnP-Protocol", "Ports", "Port", "Port Mapping", "Open Port"
+  ],
   "author": "maks11060",
   "license": "MIT",
   "repository": "git://github.com/MAKS11060/node-upnp.git",
