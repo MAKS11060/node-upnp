@@ -56,7 +56,7 @@ export default class UPnP {
 	}
 
 	async createGateway() {
-		const [{value: {headers, rinfo, linfo}}] = await this.ssdp.search('urn:schemas-upnp-org:device:InternetGatewayDevice:1')
+		const [, {value: {headers, rinfo, linfo}}] = await this.ssdp.search('urn:schemas-upnp-org:device:InternetGatewayDevice:1')
 
 		const device = new Device(headers.location)
 		return {device, rinfo, linfo}
