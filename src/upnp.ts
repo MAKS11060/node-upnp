@@ -143,7 +143,7 @@ export default class UPnP {
 
 		options.enabled = typeof options.enabled === 'boolean' ? options.enabled : true
 		options.description = typeof options.description === 'string' ? options.description : 'node:port-mapper'
-		options.ttl = typeof options.ttl === 'number' ? options.ttl : 60 * 5
+		options.ttl = typeof options.ttl === 'number' ? options.ttl : 3600
 
 		await device.run('AddPortMapping', [
 			['NewRemoteHost', remote.host],
@@ -151,7 +151,7 @@ export default class UPnP {
 			['NewProtocol', options.protocol.toUpperCase()],
 			['NewInternalPort', internal.port],
 			['NewInternalClient', internal.host || address],
-			['NewEnabled', options.enabled],
+			['NewEnabled', Number(Boolean(options.enabled))],
 			['NewPortMappingDescription', options.description],
 			['NewLeaseDuration', options.ttl]
 		])
