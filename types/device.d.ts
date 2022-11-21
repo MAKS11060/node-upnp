@@ -1,17 +1,10 @@
-export default class Device {
+export declare class Device {
     private readonly url;
     private readonly services;
-    constructor(url: any);
-    run(action: string, args: any[]): Promise<any>;
-    _getService(types: any): Promise<{
-        service: any;
-        SCPDURL: string;
-        controlURL: string;
-    }>;
-    _getXml(url: any): Promise<any>;
-    _parseDescription(info: any): {
-        services: any[];
-        devices: any[];
-    };
-    _getNamespace(data: any, uri: any): string;
+    constructor(url: string);
+    run(action: string, args?: any[]): Promise<any>;
+    private getService;
+    private getXml;
+    private parseDescription;
+    private getNamespace;
 }

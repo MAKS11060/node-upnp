@@ -1,150 +1,136 @@
+import dgram, {Socket} from 'dgram'
 import {EventEmitter} from 'events'
-import dgram from 'dgram'
-import os, {NetworkInterfaceInfoIPv4, NetworkInterfaceInfoIPv6} from 'os'
 import {AddressInfo} from 'net'
-
-
-const MULTICAST_IP_ADDRESS = '239.255.255.250'
-const MULTICAST_PORT = 1900
-const RESPONSE_TIMEOUT = 3000 //ms
-
+import {NetworkInterfaceInfo, networkInterfaces} from 'os'
 
 // const httpHeader = /HTTP\/\d{1}\.\d{1} \d+ .*/
 const ssdpHeader = /^([^:]+):\s*(.*)$/
 
+export interface SSDPOptions {
+	/** default: '239.255.255.250' */
+	multicastAddress?: string | '239.255.255.250'
+	/** default: 1900 */
+	port?: number | 1900
+	/** default: 0 */
+	sourcePort?: number
+	/** default: 3000 ms */
+	timeout?: number
+}
 
-export default class ssdp extends EventEmitter {
-	private readonly multicast: string
-	private readonly port: number
+interface SSDPResponse {
+	headers: Record<string, string>
+	rinfo: dgram.RemoteInfo
+	linfo: AddressInfo
+	msg: string
+}
 
-	private sockets: dgram.Socket[]
-	private _destroyed: boolean
-	private readonly _sourcePort: number
-	private _bound: boolean
-	private _queue: { query: Buffer, resolve: Function, reject: Function }[]
-	private readonly response_timeout: number | 5000
+export class Ssdp extends EventEmitter {
+	private readonly multicast: string = '239.255.255.250'
+	private readonly port: number = 1900
+	private readonly sourcePort: number = 0
+	private readonly timeout: number = 3000
 
-	constructor(options?: {
-		multicast_ip?: string | '239.255.255.250'
-		multicast_port?: number | 1900
-		source_port?: number | 0
-		response_timeout?: number | 5000
-	}) {
+	private sockets: Set<Socket> = new Set
+	private _destroyed: boolean = false
+
+	private waitBound = new Promise((resolve, reject) => {
+		this.once('bound', resolve)
+		setTimeout(reject, 5000) // TODO: remove constant
+	})
+
+	constructor(options?: SSDPOptions) {
 		super()
 
-		options = Object.assign({
-			multicast_ip: MULTICAST_IP_ADDRESS,
-			multicast_port: MULTICAST_PORT,
-			source_port: 0,
-			response_timeout: RESPONSE_TIMEOUT,
-		}, options)
+		if (options) {
+			for (let key of Object.keys(options)) {
+				this[key] = options[key]
+			}
+		}
 
-		this.multicast = options.multicast_ip
-		this.port = options.multicast_port
-
-		this.response_timeout = options.response_timeout
-		this._sourcePort = options.source_port
-		this._destroyed = false
-		this._bound = false
-		this._queue = []
-
-		this.sockets = []
-
-		this.createSockets()
+		this.createSockets() // init sockets for network interfaces
 	}
 
-	createSockets() {
-		if (this._destroyed) throw new Error('client is destroyed')
+	async search(device: string) {
+		if (!await this.waitBound) throw new Error('Not bound')
 
-		this.sockets = []
+		const query = Buffer.from(
+			'M-SEARCH * HTTP/1.1\r\n' +
+			'HOST: ' + this.multicast + ':' + this.port + '\r\n' +
+			'MAN: "ssdp:discover"\r\n' +
+			'MX: 1\r\n' +
+			'ST: ' + device + '\r\n' +
+			'\r\n',
+		)
 
-		const interfaces = os.networkInterfaces()
+		return Promise.allSettled([...this.sockets.values()].map(socket => {
+			return new Promise<SSDPResponse>((resolve, reject) => {
+				socket.on('message', (msg, rinfo) => {
+					resolve(this._parseResponse(msg.toString(), rinfo, socket.address()))
+				})
+				// socket.on('listening', () => {})
+				socket.send(query, 0, query.length, this.port, this.multicast)
+				setTimeout(reject, this.timeout, {error: 'timeout', info: socket.address()})
+			})
+		}))
+	}
 
-		for (const [, data] of Object.entries(interfaces)) {
-			for (const item of data) {
-				if (!item.internal && item.family === 'IPv4') this.sockets.push(this.createSocket(item))
-			}
+	destroy() {
+		this._destroyed = true
+		for (const socket of [...this.sockets.values()]) {
+			socket.close()
+			this.sockets.delete(socket)
 		}
 	}
 
-	createSocket(interf: NetworkInterfaceInfoIPv4 | NetworkInterfaceInfoIPv6) {
-		let socket = dgram.createSocket(interf.family === 'IPv4' ? 'udp4' : 'udp6')
+	private createSockets() {
+		if (this._destroyed) throw new Error('client is destroyed')
+		for (const networkInterface of this.getNetworkInterfaces()) {
+			this.sockets.add(this.createSocket(networkInterface))
+		}
+		// this.sockets = this.getNetworkInterfaces().map(int => this.createSocket(int))
+	}
+
+	private getNetworkInterfaces(): NetworkInterfaceInfo[] {
+		return Object.entries(networkInterfaces()).map(([, v]) => v).flat()
+			.filter(int => !int.internal && int.family == 'IPv4')
+	}
+
+	private createSocket(interfaceInfo: NetworkInterfaceInfo): Socket {
+		const socket = dgram.createSocket(interfaceInfo.family === 'IPv4' ? 'udp4' : 'udp6')
 
 		socket.on('error', () => {
-			if (socket) {
-				socket.close()
-			}
+			if (socket) socket.close()
 		})
 		socket.on('close', () => {
-			if (socket) {
-				this.sockets.splice(this.sockets.indexOf(socket), 1)
-				socket = null
-			}
+			this.sockets.delete(socket)
 		})
 		socket.on('listening', () => {
-			this._bound = true
-			this.ready()
+			this.emit('bound', true)
 		})
 
-		socket.bind(this._sourcePort, interf.address)
+		socket.bind(this.sourcePort, interfaceInfo.address)
 
 		return socket
 	}
 
-	ready() {
-		while (this._queue.length > 0) {
-			let promises = []
-			const {query, resolve} = this._queue.shift()
-			for (const socket of this.sockets) {
-				promises.push(new Promise((resolve1, reject1) => {
-					// socket.on('error', reject1)
-					socket.once('message', (data, rinfo) => {
-						resolve1(this._parseResponse(data.toString(), rinfo, socket.address()))
-					})
-					setTimeout(reject1, this.response_timeout, 'timeout')
-				}))
-				socket.send(query, 0, query.length, this.port, this.multicast)
-			}
-			resolve(Promise.allSettled(promises))
-		}
-	}
-
-	search(device: string) {
-		return new Promise((resolve: (value: { status: 'fulfilled' | 'rejected', reason?: any, value: { rinfo: dgram.RemoteInfo, linfo: AddressInfo, headers: { [k: string]: string }, msg: string } }[]) => void, reject) => {
-			if (this._destroyed) return reject(new Error('client is destroyed'))
-
-			const query = Buffer.from(
-				'M-SEARCH * HTTP/1.1\r\n' +
-				'HOST: ' + this.multicast + ':' + this.port + '\r\n' +
-				'MAN: "ssdp:discover"\r\n' +
-				'MX: 1\r\n' +
-				'ST: ' + device + '\r\n' +
-				'\r\n'
-			)
-
-			this._queue.push({query, resolve, reject})
-			if (this._bound) this.ready()
-		})
-	}
-
-	_parseResponse(msg: string, rinfo: dgram.RemoteInfo, linfo: AddressInfo) {
+	private _parseResponse(msg: string, rinfo: dgram.RemoteInfo, linfo: AddressInfo) {
 		const {headers} = this._parseCommand(msg)
-		return {rinfo, linfo, headers, msg}
+		return {headers, rinfo, linfo, msg}
 	}
 
-	_parseCommand(msg) {
+	private _parseCommand(msg: string) {
 		const method = this._getMethod(msg)
 		const headers = this._getHeaders(msg)
 		return {method, headers}
 	}
 
-	_getMethod(msg) {
+	private _getMethod(msg: string) {
 		let lines = msg.split('\r\n')
 		let type = lines.shift().split(' ')
 		return (type[0] || '').toLowerCase()
 	}
 
-	_getHeaders(msg) {
+	private _getHeaders(msg: string) {
 		let lines = msg.split('\r\n')
 		let headers = {}
 
@@ -156,14 +142,5 @@ export default class ssdp extends EventEmitter {
 		})
 
 		return headers
-	}
-
-	destroy() {
-		this._destroyed = true
-
-		while (this.sockets.length > 0) {
-			const socket = this.sockets.shift()
-			socket.close()
-		}
 	}
 }

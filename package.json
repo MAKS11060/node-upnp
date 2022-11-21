@@ -1,36 +1,28 @@
 {
   "name": "@maks11060/upnp",
-  "version": "1.0.3",
-  "description": "UPnP protocol simple lib",
+  "version": "1.1.0",
+  "description": "UPnP lib",
   "type": "module",
   "exports": "./dist/upnp.js",
   "types": "./types/upnp.d.ts",
-  "scripts": {
-    "start": "node dist/index.js",
-    "build": "tsc src/upnp.ts --outDir dist -t esnext -m esnext --moduleResolution node --allowSyntheticDefaultImports --declaration --declarationDir types",
-    "start:w": "nodemon dist/index.js",
-    "build:w": "tsc src/upnp.ts -w --outDir dist -t esnext -m esnext --moduleResolution node --allowSyntheticDefaultImports --sourceMap",
-    "prepare": "npm run build"
-  },
   "keywords": [
-    "UPnP", "UPnP-Protocol", "Ports", "Port", "Port Mapping", "Open Port"
+    "upnp",
+    "Port Mapping"
   ],
   "author": "maks11060",
   "license": "MIT",
   "repository": "git://github.com/MAKS11060/node-upnp.git",
+  "scripts": {
+    "start": "ts-node-esm examples/index.ts",
+    "build": "tsc"
+  },
   "dependencies": {
-    "node-fetch": "^3.1.0",
     "xml2js": "^0.4.23"
   },
   "devDependencies": {
-    "typescript": "^4.4.4",
-    "@types/node": "^16.11.7",
-    "@types/xml2js": "^0.4.9"
-  },
-  "nodemonConfig": {
-    "verbose": false,
-    "watch": [
-      "dist"
-    ]
+    "ts-node": "^10.9.1",
+    "typescript": "^4.9.3",
+    "@types/node": "^18.11.9",
+    "@types/xml2js": "^0.4.11"
   }
 }

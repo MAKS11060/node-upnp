@@ -1,53 +1,79 @@
 /// <reference types="node" />
-import Device from './device.js';
-declare type Protocol = 'TCP' | 'UDP';
-interface PortMapping {
-    remote: {
-        host: string;
-        port: number;
-    };
-    internal: {
-        host: string;
-        port: number;
-    };
-    protocol: Protocol;
-    enabled: boolean;
-    description: string;
-    ttl: number;
-    local: boolean;
-}
-interface MappingOptions {
-    ttl?: number;
-    remote?: {
-        host?: string;
-        port?: number;
-    };
-    internal: {
-        host?: string;
-        port: number;
-    };
-    protocol?: Protocol;
+/// <reference types="node" />
+import { Device } from './device.js';
+import { SSDPOptions } from './ssdp.js';
+type Protocol = 'TCP' | 'UDP';
+interface UPnPOptions {
+    /** Default: `['TCP']` */
+    protocol: Protocol[];
+    /** Default: `Node.js UPnP` */
     description?: string;
-    enabled?: boolean;
+    /** Default: 3600 seconds
+     * - `0` = Permanent open
+     **/
+    ttl?: number;
+    ssdp?: SSDPOptions;
 }
-interface UnmappingOptions {
+interface Mapping {
+    /** Default: `''` access all hosts
+     *  - access to a specific host */
+    remoteHost?: string;
+    /** Default: `3000`
+     *  - public port */
+    remotePort: number;
+    /** Default: `TCP`
+     *  - if undefined, used Global options */
     protocol?: Protocol;
-    host?: string;
-    port: number;
+    /** Default: `''`
+     *  - IP localhost */
+    internalHost?: string;
+    /** Default: 3000
+     *  - if undefined, used `remotePort` */
+    internalPort?: number;
+    /** Default: `true` */
+    enabled?: boolean;
+    /** Default: Node.js UPnP */
+    description?: string;
+    /** Default: 3600 seconds
+     * - `0` = Permanent open
+     **/
+    ttl?: number;
 }
-export default class UPnP {
-    private ssdp;
-    private readonly _protocols;
-    constructor();
-    static createClient(): UPnP;
+interface Unmapping {
+    /** Default: `''` access all hosts
+     *  - access to a specific host */
+    remoteHost?: string;
+    /** Default: `3000`
+     *  - public port */
+    remotePort: number;
+    /** Default: `TCP`
+     *  - if undefined, used Global options */
+    protocol?: Protocol;
+}
+interface GetMappingOptions {
+    /** Ignore `Description` filter. Show all active UPnP clients e.g. `QBitTorrent/x.x.x` */
+    allClients?: boolean;
+    /** Ignore `InternalHost` filter. Show all clients on LAN */
+    allDevices?: boolean;
+}
+export declare class UPnP {
+    readonly options: UPnPOptions;
+    private readonly ssdp;
+    private readonly ssdpDevice;
+    constructor(options: UPnPOptions);
     createGateway(): Promise<{
-        device: Device;
-        rinfo: import("dgram").RemoteInfo;
         linfo: import("net").AddressInfo;
+        rinfo: import("dgram").RemoteInfo;
+        device: Device;
     }>;
-    externalIp(): Promise<string>;
-    getMappings(): Promise<PortMapping[]>;
-    portMapping(options: MappingOptions): Promise<MappingOptions>;
-    portUnmapping(options: UnmappingOptions): Promise<any>;
+    /** Get public address */
+    externalAddress(): Promise<string>;
+    /** Add mapping rule */
+    mapping(options: Mapping): Promise<void>;
+    /** Remove mapping rule */
+    unmapping(options: Unmapping): Promise<void>;
+    /** Get mapping rule */
+    getMapping(options?: GetMappingOptions): Promise<Readonly<Mapping>[]>;
+    destroy(): void;
 }
 export {};

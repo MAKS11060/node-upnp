@@ -1,174 +1,193 @@
-import ssdp from './ssdp.js'
-import Device from './device.js'
-
+import {Device} from './device.js'
+import {Ssdp, SSDPOptions} from './ssdp.js'
 
 type Protocol = 'TCP' | 'UDP'
 
-interface PortMapping {
-	remote: {
-		host: string
-		port: number
-	},
-	internal: {
-		host: string
-		port: number
-	},
-	protocol: Protocol
-	enabled: boolean
-	description: string
-	ttl: number
-	local: boolean
-}
-
-interface MappingOptions {
-	ttl?: number
-	remote?: {
-		host?: string
-		port?: number
-	}
-	internal: {
-		host?: string
-		port: number
-	}
-	protocol?: Protocol
+interface UPnPOptions {
+	/** Default: `['TCP']` */
+	protocol: Protocol[]
+	/** Default: `Node.js UPnP` */
 	description?: string
-	enabled?: boolean
+	/** Default: 3600 seconds
+	 * - `0` = Permanent open
+	 **/
+	ttl?: number
+	ssdp?: SSDPOptions
 }
 
-interface UnmappingOptions {
+interface Mapping {
+	/** Default: `''` access all hosts
+	 *  - access to a specific host */
+	remoteHost?: string
+	/** Default: `3000`
+	 *  - public port */
+	remotePort: number
+	/** Default: `TCP`
+	 *  - if undefined, used Global options */
 	protocol?: Protocol
-	host?: string
-	port: number
+	/** Default: `''`
+	 *  - IP localhost */
+	internalHost?: string
+	/** Default: 3000
+	 *  - if undefined, used `remotePort` */
+	internalPort?: number
+	/** Default: `true` */
+	enabled?: boolean
+	/** Default: Node.js UPnP */
+	description?: string
+	/** Default: 3600 seconds
+	 * - `0` = Permanent open
+	 **/
+	ttl?: number
 }
 
+interface Unmapping {
+	/** Default: `''` access all hosts
+	 *  - access to a specific host */
+	remoteHost?: string
+	/** Default: `3000`
+	 *  - public port */
+	remotePort: number
+	/** Default: `TCP`
+	 *  - if undefined, used Global options */
+	protocol?: Protocol
+}
 
-export default class UPnP {
-	private ssdp: ssdp
-	private readonly _protocols: string[]
+interface GenericPortMappingEntry {
+	NewRemoteHost: string
+	NewExternalPort: string
+	NewProtocol: string
+	NewInternalPort: string
+	NewInternalClient: string
+	NewEnabled: string
+	NewPortMappingDescription: string
+	NewLeaseDuration: string
+}
 
-	constructor() {
-		this.ssdp = new ssdp()
-		this._protocols = ['TCP', 'UDP']
-	}
+interface GetMappingOptions {
+	/** Ignore `Description` filter. Show all active UPnP clients e.g. `QBitTorrent/x.x.x` */
+	allClients?: boolean
 
-	static createClient() {
-		return new UPnP()
+	/** Ignore `InternalHost` filter. Show all clients on LAN */
+	allDevices?: boolean
+}
+
+export class UPnP {
+	private readonly ssdp: Ssdp
+	private readonly ssdpDevice = 'urn:schemas-upnp-org:device:InternetGatewayDevice:1'
+
+	constructor(readonly options: UPnPOptions) {
+		this.ssdp = new Ssdp(this.options?.ssdp)
+
+		if (!options.description) options.description = 'Node.js UPnP'
+		if (!options.ttl) options.ttl = 3600
 	}
 
 	async createGateway() {
-		const [, {value: {headers, rinfo, linfo}}] = await this.ssdp.search('urn:schemas-upnp-org:device:InternetGatewayDevice:1')
-
-		const device = new Device(headers.location)
-		return {device, rinfo, linfo}
+		const res = await this.ssdp.search(this.ssdpDevice)
+		const data = res.find(value => value.status == 'fulfilled')
+		if (data.status == 'fulfilled') {
+			// console.log(`[${this.constructor.name}]`, value)
+			const {linfo, rinfo} = data.value
+			return {linfo, rinfo, device: new Device(data.value.headers.location)}
+		}
 	}
 
-	async externalIp(): Promise<string> {
-		const {device} = await this.createGateway()
-
-		const data = await device.run('GetExternalIPAddress', [])
+	/** Get public address */
+	async externalAddress(): Promise<string> {
+		const gateway = await this.createGateway()
+		const data = await gateway.device.run('GetExternalIPAddress')
 
 		let key = null
 		Object.keys(data).some(k => {
 			if (!/:GetExternalIPAddressResponse$/.test(k)) return false
-
 			key = k
 			return true
 		})
-
 		if (key) return data[key].NewExternalIPAddress
 
-		throw new Error('Incorrect response')
+		throw new Error('Invalid response')
 	}
 
-	async getMappings(): Promise<PortMapping[]> {
-		const {device, linfo: {address}} = await this.createGateway()
-
-		async function GetGenericPortMappingEntry(i) {
-			const result = await device.run('GetGenericPortMappingEntry', [['NewPortMappingIndex', i]])
-				.then(data => {
-					for (const key in data) if (/:GetGenericPortMappingEntryResponse/.test(key)) return data[key]
-				})
-				.then(data => ({
-					remote: {
-						host: typeof data.NewRemoteHost === 'string' && data.NewRemoteHost || '',
-						port: parseInt(data.NewExternalPort, 10)
-					},
-					internal: {
-						host: data.NewInternalClient,
-						port: parseInt(data.NewInternalPort, 10)
-					},
-					// protocol: data.NewProtocol.toLowerCase(),
-					protocol: data.NewProtocol,
-					enabled: data.NewEnabled === '1',
-					description: data.NewPortMappingDescription,
-					ttl: parseInt(data.NewLeaseDuration, 10),
-					local: false
-				}))
-
-			result.local = result.internal.host === address
-			return result
+	/** Add mapping rule */
+	async mapping(options: Mapping) {
+		if (undefined === options.protocol) {
+			for (let protocol of this.options.protocol) {
+				await this.mapping({...options, protocol})
+			}
+			return
 		}
 
-		return new Promise(async (resolve, reject) => {
-			let i = 0
-			const results = []
-			while (true) {
-				try {
-					const data = await GetGenericPortMappingEntry(i++)
-					if (!data.protocol) {
-						reject(new Error('invalid data'))
-						break
-					}
-					results.push(data)
-				} catch (e) {
-					if (i === 1) continue
-					resolve(results)
-					break
-				}
+		const gateway = await this.createGateway()
+
+		if (options.remotePort < 1 || options.remotePort > 65536) throw new RangeError('Port out of range 1 <=> 65536')
+		if (!options.remotePort) options.internalPort = options.remotePort
+		if (options.internalPort < 1 || options.internalPort > 65536) throw new RangeError('Port out of range 1 <=> 65536')
+
+		await gateway.device.run('AddPortMapping', [
+			['NewRemoteHost', options?.remoteHost ?? ''],
+			['NewExternalPort', options?.remotePort ?? 3000],
+			['NewProtocol', options?.protocol?.toUpperCase() || 'TCP'],
+			['NewInternalPort', options?.internalPort ?? options?.remotePort ?? 3000],
+			['NewInternalClient', options?.internalHost ?? gateway.linfo.address],
+			['NewEnabled', Number(Boolean(options?.enabled ?? true))],
+			['NewPortMappingDescription', options?.description ?? this.options?.description ?? ''],
+			['NewLeaseDuration', options.ttl ?? this.options.ttl],
+		])
+	}
+
+	/** Remove mapping rule */
+	async unmapping(options: Unmapping) {
+		if (undefined === options.protocol) {
+			for (let protocol of this.options.protocol) {
+				await this.unmapping({...options, protocol})
 			}
-			resolve(results)
-		})
+			return
+		}
+
+		const gateway = await this.createGateway()
+
+		await gateway.device.run('DeletePortMapping', [
+			['NewRemoteHost', options?.remoteHost ?? ''],
+			['NewExternalPort', options?.remotePort ?? 3000],
+			['NewProtocol', options?.protocol?.toUpperCase() || 'TCP'],
+		])
 	}
 
-	async portMapping(options: MappingOptions) {
-		const {device, linfo: {address}} = await this.createGateway()
+	/** Get mapping rule */
+	async getMapping(options?: GetMappingOptions): Promise<Readonly<Mapping>[]> {
+		const gateway = await this.createGateway()
 
-		if (!options.remote) options.remote = {}
-		const {remote, internal} = options
-		if (!remote.port) remote.port = internal.port
-		if (!internal.host) internal.host = address
+		async function* getEntry(): AsyncIterable<GenericPortMappingEntry> {
+			let i = 0
+			while (true) {
+				const res = await gateway.device.run('GetGenericPortMappingEntry', [['NewPortMappingIndex', i++]])
+					.catch(() => null)
+				if (!res) break
 
-		options.protocol = typeof options.protocol === 'string' ? options.protocol : 'TCP'
-		if (!this._protocols.includes(options.protocol.toUpperCase())) throw new TypeError(`Incorrect protocol type: ${options.protocol}`)
+				for (const key in res) if (/:GetGenericPortMappingEntryResponse/.test(key)) yield res[key]
+			}
+		}
 
-		options.enabled = typeof options.enabled === 'boolean' ? options.enabled : true
-		options.description = typeof options.description === 'string' ? options.description : 'node:port-mapper'
-		options.ttl = typeof options.ttl === 'number' ? options.ttl : 3600
-
-		await device.run('AddPortMapping', [
-			['NewRemoteHost', remote.host],
-			['NewExternalPort', remote.port],
-			['NewProtocol', options.protocol.toUpperCase()],
-			['NewInternalPort', internal.port],
-			['NewInternalClient', internal.host || address],
-			['NewEnabled', Number(Boolean(options.enabled))],
-			['NewPortMappingDescription', options.description],
-			['NewLeaseDuration', options.ttl]
-		])
-
-		return options
+		let result: GenericPortMappingEntry[] = []
+		for await (const item of getEntry()) result.push(item)
+		return result.map(entry => ({
+			remoteHost: entry.NewRemoteHost,
+			remotePort: Number(entry.NewExternalPort),
+			protocol: entry.NewProtocol,
+			internalHost: entry.NewInternalClient,
+			internalPort: Number(entry.NewInternalPort),
+			ttl: Number(entry.NewLeaseDuration),
+			enabled: entry.NewEnabled === '1',
+			description: entry.NewPortMappingDescription,
+		} as Mapping))
+			.filter(entry => {
+				if (options?.allClients && entry.description !== this.options?.description) return true
+				if (options?.allDevices && entry.internalHost != gateway.linfo.address) return true
+			})
 	}
 
-	async portUnmapping(options: UnmappingOptions) {
-		const {device} = await this.createGateway()
-
-		options.protocol = typeof options.protocol === 'string' ? options.protocol : 'TCP'
-		if (!this._protocols.includes(options.protocol.toUpperCase())) throw new TypeError(`Incorrect protocol type: ${options.protocol}`)
-
-		return await device.run('DeletePortMapping', [
-			['NewRemoteHost', options.host],
-			['NewExternalPort', options.port],
-			['NewProtocol', options.protocol.toUpperCase()]
-		])
+	destroy() {
+		this.ssdp.destroy()
 	}
 }
